@@ -1,0 +1,18 @@
+#+TITLE: Spacecadet Tasks
+#+STARTUP: overview
+
+* Inbox
+* Projects
+* TODO [#A] Write documentation  :work:docs:
+   DEADLINE: <2026-02-15>
+   :PROPERTIES:
+   :Effort:   3:00
+   :END:
+   :LOGBOOK:
+   CLOCK: [2026-01-30 Fri 00:48]--[2026-01-30 Fri 00:48] => 0:01
+   - Note taken on [2026-01-30 Fri 00:48] \\
+     Started outline draft
+   :END:
+   SCHEDULED: <2026-01-30>
+* DONE [#B] Fix login bug                                            :bugfix:
+CLOSED: [2026-01-30 Fri 00:48]
