@@ -9,6 +9,7 @@
 ;; Load org-mode
 (require 'org)
 (require 'org-agenda)
+(require 'org-id)
 (require 'json)
 
 ;; Get the directory where this init.el lives
@@ -36,6 +37,9 @@
 ;; Enable logging of state changes
 (setq org-log-done 'time)
 (setq org-log-into-drawer t)
+
+;; org-id: don't track globally (not useful in batch mode)
+(setq org-id-track-globally nil)
 
 ;; Deadline/schedule warnings
 (setq org-deadline-warning-days 7)
@@ -83,6 +87,36 @@ Returns t if found, nil otherwise."
                (setq found t)
                (funcall callback)))))))
     found))
+
+(defun spacecadet--find-task-by-id (id callback)
+  "Find task with org ID equal to ID, then call CALLBACK.
+CALLBACK is called with point on the matching heading.
+Returns t if found, nil otherwise."
+  (let ((found nil))
+    (dolist (file (org-agenda-files))
+      (when (and (not found) (file-exists-p file))
+        (with-current-buffer (find-file-noselect file)
+          (org-mode)
+          (goto-char (point-min))
+          (org-map-entries
+           (lambda ()
+             (when (and (not found)
+                        (string-equal id (or (org-entry-get nil "ID") "")))
+               (setq found t)
+               (funcall callback)))))))
+    found))
+
+(defun spacecadet--find-task-smart (callback)
+  "Find a task using SC_ID (preferred) or SC_HEADING from environment.
+Calls CALLBACK with point on the matching heading. Returns t if found."
+  (let ((id (spacecadet--env "SC_ID"))
+        (heading (spacecadet--env "SC_HEADING")))
+    (cond
+     (id (spacecadet--find-task-by-id id callback))
+     (heading (spacecadet--find-task heading callback))
+     (t (princ (json-encode (list (cons 'status "error")
+                                  (cons 'message "SC_ID or SC_HEADING required"))))
+        (kill-emacs 1)))))
 
 (defun spacecadet--json-list (lst)
   "Encode LST as JSON, ensuring empty list outputs [] not null."
@@ -154,13 +188,15 @@ Returns t if found, nil otherwise."
            (lambda ()
              (let* ((heading (org-get-heading t t t t))
                     (todo-state (org-get-todo-state))
+                    (id (org-entry-get nil "ID"))
                     (priority (org-entry-get nil "PRIORITY"))
                     (deadline (org-entry-get nil "DEADLINE"))
                     (scheduled (org-entry-get nil "SCHEDULED"))
                     (tags (org-get-tags))
                     (effort (org-entry-get nil "Effort")))
                (when todo-state
-                 (push (list (cons 'heading heading)
+                 (push (list (cons 'id id)
+                             (cons 'heading heading)
                              (cons 'todo todo-state)
                              (cons 'priority priority)
                              (cons 'deadline deadline)
@@ -182,12 +218,14 @@ Returns t if found, nil otherwise."
            (lambda ()
              (let* ((heading (org-get-heading t t t t))
                     (todo-state (org-get-todo-state))
+                    (id (org-entry-get nil "ID"))
                     (priority (org-entry-get nil "PRIORITY"))
                     (deadline (org-entry-get nil "DEADLINE"))
                     (scheduled (org-entry-get nil "SCHEDULED"))
                     (tags (org-get-tags)))
                (when todo-state
-                 (push (list (cons 'heading heading)
+                 (push (list (cons 'id id)
+                             (cons 'heading heading)
                              (cons 'todo todo-state)
                              (cons 'priority priority)
                              (cons 'deadline deadline)
@@ -239,26 +277,25 @@ Returns t if found, nil otherwise."
         (insert "\n"))
       (when (and scheduled (not deadline))
         (insert (format "   SCHEDULED: <%s>\n" scheduled)))
-      (save-buffer)
-      (kill-buffer (current-buffer)))
-    (princ (json-encode (list (cons 'status "ok")
-                              (cons 'heading heading)
-                              (cons 'todo state)
-                              (cons 'file target-file))))))
+      ;; Go back to the heading we just inserted and assign an org-id
+      (forward-line -1)
+      (org-back-to-heading t)
+      (let ((task-id (org-id-get-create)))
+        (save-buffer)
+        (kill-buffer (current-buffer))
+        (princ (json-encode (list (cons 'status "ok")
+                                  (cons 'id task-id)
+                                  (cons 'heading heading)
+                                  (cons 'todo state)
+                                  (cons 'file target-file))))))))
 
 (defun spacecadet-update-task-from-env ()
   "Update a task. Parameters from environment variables:
-  SC_HEADING, SC_NEW_STATE, SC_NEW_PRIORITY, SC_NEW_DEADLINE."
-  (let* ((heading (spacecadet--env "SC_HEADING"))
-         (new-state (spacecadet--env "SC_NEW_STATE"))
+  SC_ID or SC_HEADING, SC_NEW_STATE, SC_NEW_PRIORITY, SC_NEW_DEADLINE."
+  (let* ((new-state (spacecadet--env "SC_NEW_STATE"))
          (new-priority (spacecadet--env "SC_NEW_PRIORITY"))
          (new-deadline (spacecadet--env "SC_NEW_DEADLINE")))
-    (unless heading
-      (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING not set"))))
-      (kill-emacs 1))
-    (let ((found (spacecadet--find-task
-                  heading
+    (let ((found (spacecadet--find-task-smart
                   (lambda ()
                     (when new-state (org-todo new-state))
                     (when new-priority
@@ -267,88 +304,65 @@ Returns t if found, nil otherwise."
                     (save-buffer)))))
       (if found
           (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'heading heading)
                                     (cons 'updated t))))
         (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message
-                                        (format "Task not found: %s" heading)))))))))
+                                  (cons 'message "Task not found"))))))))
 
 (defun spacecadet-delete-task-from-env ()
-  "Delete a task. SC_HEADING from environment."
-  (let ((heading (spacecadet--env "SC_HEADING")))
-    (unless heading
+  "Delete a task. SC_ID or SC_HEADING from environment."
+  (let ((found (spacecadet--find-task-smart
+                (lambda ()
+                  (org-cut-subtree)
+                  (save-buffer)))))
+    (if found
+        (princ (json-encode (list (cons 'status "ok")
+                                  (cons 'deleted t))))
       (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING not set"))))
-      (kill-emacs 1))
-    (let ((found (spacecadet--find-task
-                  heading
-                  (lambda ()
-                    (org-cut-subtree)
-                    (save-buffer)))))
-      (if found
-          (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'heading heading)
-                                    (cons 'deleted t))))
-        (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message
-                                        (format "Task not found: %s" heading)))))))))
+                                (cons 'message "Task not found")))))))
 
 (defun spacecadet-get-task-from-env ()
-  "Get task details. SC_HEADING from environment."
-  (let ((heading (spacecadet--env "SC_HEADING")))
-    (unless heading
+  "Get task details. SC_ID or SC_HEADING from environment."
+  (let ((found (spacecadet--find-task-smart
+                (lambda ()
+                  (let* ((h (org-get-heading t t t t))
+                         (id (org-entry-get nil "ID"))
+                         (todo-state (org-get-todo-state))
+                         (priority (org-entry-get nil "PRIORITY"))
+                         (deadline (org-entry-get nil "DEADLINE"))
+                         (scheduled (org-entry-get nil "SCHEDULED"))
+                         (tags (org-get-tags))
+                         (body (org-get-entry)))
+                    (princ (json-encode
+                            (list (cons 'id id)
+                                  (cons 'heading h)
+                                  (cons 'todo todo-state)
+                                  (cons 'priority priority)
+                                  (cons 'deadline deadline)
+                                  (cons 'scheduled scheduled)
+                                  (cons 'tags (if tags (vconcat tags) []))
+                                  (cons 'body (string-trim (or body "")))
+                                  (cons 'file (buffer-file-name))))))))))
+    (unless found
       (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING not set"))))
-      (kill-emacs 1))
-    (let ((found (spacecadet--find-task
-                  heading
-                  (lambda ()
-                    (let* ((h (org-get-heading t t t t))
-                           (todo-state (org-get-todo-state))
-                           (priority (org-entry-get nil "PRIORITY"))
-                           (deadline (org-entry-get nil "DEADLINE"))
-                           (scheduled (org-entry-get nil "SCHEDULED"))
-                           (tags (org-get-tags))
-                           (body (org-get-entry)))
-                      (princ (json-encode
-                              (list (cons 'heading h)
-                                    (cons 'todo todo-state)
-                                    (cons 'priority priority)
-                                    (cons 'deadline deadline)
-                                    (cons 'scheduled scheduled)
-                                    (cons 'tags (if tags (vconcat tags) []))
-                                    (cons 'body (string-trim (or body "")))
-                                    (cons 'file (buffer-file-name))))))))))
-      (unless found
-        (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message
-                                        (format "Task not found: %s" heading)))))))))
+                                (cons 'message "Task not found")))))))
 
 ;;; ============================================================
 ;;; CLOCKING OPERATIONS
 ;;; ============================================================
 
 (defun spacecadet-clock-in-from-env ()
-  "Clock in to task. SC_HEADING from environment."
+  "Clock in to task. SC_ID or SC_HEADING from environment."
   (require 'org-clock)
-  (let ((heading (spacecadet--env "SC_HEADING")))
-    (unless heading
+  (let ((found (spacecadet--find-task-smart
+                (lambda ()
+                  (org-clock-in)
+                  (save-buffer)))))
+    (if found
+        (princ (json-encode (list (cons 'status "ok")
+                                  (cons 'clocked-in t)
+                                  (cons 'time (format-time-string "%Y-%m-%d %H:%M:%S")))))
       (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING not set"))))
-      (kill-emacs 1))
-    (let ((found (spacecadet--find-task
-                  heading
-                  (lambda ()
-                    (org-clock-in)
-                    (save-buffer)))))
-      (if found
-          (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'heading heading)
-                                    (cons 'clocked-in t)
-                                    (cons 'time (format-time-string "%Y-%m-%d %H:%M:%S")))))
-        (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message
-                                        (format "Task not found: %s" heading)))))))))
+                                (cons 'message "Task not found")))))))
 
 (defun spacecadet-clock-out ()
   "Clock out of any running clock by finding open CLOCK entries in org files.
@@ -417,16 +431,14 @@ directly rather than relying on org-clock state."
 ;;; ============================================================
 
 (defun spacecadet-add-note-from-env ()
-  "Add a note to a task. SC_HEADING, SC_NOTE from environment."
-  (let ((heading (spacecadet--env "SC_HEADING"))
-        (note (spacecadet--env "SC_NOTE"))
+  "Add a note to a task. SC_ID or SC_HEADING, plus SC_NOTE from environment."
+  (let ((note (spacecadet--env "SC_NOTE"))
         (timestamp (format-time-string "%Y-%m-%d %a %H:%M")))
-    (unless (and heading note)
+    (unless note
       (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING and SC_NOTE required"))))
+                                (cons 'message "SC_NOTE required"))))
       (kill-emacs 1))
-    (let ((found (spacecadet--find-task
-                  heading
+    (let ((found (spacecadet--find-task-smart
                   (lambda ()
                     (let ((beg (org-entry-beginning-position))
                           (end (org-entry-end-position)))
@@ -443,34 +455,28 @@ directly rather than relying on org-clock state."
                     (save-buffer)))))
       (if found
           (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'heading heading)
                                     (cons 'note-added t))))
         (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message
-                                        (format "Task not found: %s" heading)))))))))
+                                  (cons 'message "Task not found"))))))))
 
 (defun spacecadet-set-property-from-env ()
-  "Set a property on a task. SC_HEADING, SC_PROPERTY, SC_VALUE from environment."
-  (let ((heading (spacecadet--env "SC_HEADING"))
-        (property (spacecadet--env "SC_PROPERTY"))
+  "Set a property on a task. SC_ID or SC_HEADING, plus SC_PROPERTY, SC_VALUE from environment."
+  (let ((property (spacecadet--env "SC_PROPERTY"))
         (value (spacecadet--env "SC_VALUE")))
-    (unless (and heading property value)
+    (unless (and property value)
       (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING, SC_PROPERTY, SC_VALUE required"))))
+                                (cons 'message "SC_PROPERTY and SC_VALUE required"))))
       (kill-emacs 1))
-    (let ((found (spacecadet--find-task
-                  heading
+    (let ((found (spacecadet--find-task-smart
                   (lambda ()
                     (org-set-property property value)
                     (save-buffer)))))
       (if found
           (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'heading heading)
                                     (cons 'property property)
                                     (cons 'value value))))
         (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message
-                                        (format "Task not found: %s" heading)))))))))
+                                  (cons 'message "Task not found"))))))))
 
 ;;; ============================================================
 ;;; REFILE OPERATION
@@ -478,18 +484,16 @@ directly rather than relying on org-clock state."
 
 (defun spacecadet-refile-task-from-env ()
   "Refile a task under a target heading.
-SC_HEADING, SC_TARGET_HEADING, SC_TARGET_FILE from environment."
-  (let* ((heading (spacecadet--env "SC_HEADING"))
-         (target-heading (spacecadet--env "SC_TARGET_HEADING"))
+SC_ID or SC_HEADING, SC_TARGET_HEADING, SC_TARGET_FILE from environment."
+  (let* ((target-heading (spacecadet--env "SC_TARGET_HEADING"))
          (target-file (spacecadet--env "SC_TARGET_FILE"))
-         (found nil)
          (target-pos nil)
          (target-buf nil)
          (source-buf nil)
          (subtree-text nil))
-    (unless (and heading target-heading)
+    (unless target-heading
       (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING and SC_TARGET_HEADING required"))))
+                                (cons 'message "SC_TARGET_HEADING required"))))
       (kill-emacs 1))
     ;; Find the target heading
     (let ((files (if target-file
@@ -510,56 +514,45 @@ SC_HEADING, SC_TARGET_HEADING, SC_TARGET_FILE from environment."
                                   (cons 'message
                                         (format "Target heading not found: %s"
                                                 target-heading)))))
-      ;; Find and cut the source task
-      (dolist (file (org-agenda-files))
-        (when (and (not found) (file-exists-p file))
-          (with-current-buffer (find-file-noselect file)
-            (org-mode)
-            (goto-char (point-min))
-            (org-map-entries
-             (lambda ()
-               (when (and (not found)
-                          (string-equal heading
-                                        (org-get-heading t t t t)))
-                 (setq found t
-                       source-buf (current-buffer))
-                 (let* ((beg (org-entry-beginning-position))
-                        (end (org-entry-end-position))
-                        (text (buffer-substring beg end)))
-                   (setq subtree-text text)
-                   (delete-region beg end)
-                   (when (and (bolp) (eolp) (not (bobp)) (not (eobp)))
-                     (delete-char 1)))))))))
-      (if (not found)
-          (princ (json-encode (list (cons 'status "error")
-                                    (cons 'message
-                                          (format "Task not found: %s" heading)))))
-        (with-current-buffer target-buf
-          (goto-char target-pos)
-          (let* ((target-level (org-current-level))
-                 (child-level (1+ target-level)))
-            (org-end-of-subtree t t)
-            (let ((adjusted-text
-                   (with-temp-buffer
-                     (insert subtree-text)
-                     (goto-char (point-min))
-                     (while (re-search-forward "^\\(\\*+\\)" nil t)
-                       (let* ((stars (match-string 1))
-                              (new-level (+ (length stars)
-                                            (- child-level 1)))
-                              (new-stars (make-string new-level ?*)))
-                         (replace-match new-stars)))
-                     (buffer-string))))
-              (unless (bolp) (insert "\n"))
-              (insert adjusted-text)
-              (unless (bolp) (insert "\n"))))
-          (save-buffer))
-        (when source-buf
-          (with-current-buffer source-buf
-            (save-buffer)))
-        (princ (json-encode (list (cons 'status "ok")
-                                  (cons 'heading heading)
-                                  (cons 'refiled-to target-heading))))))))
+      ;; Find and cut the source task using smart lookup
+      (let ((found (spacecadet--find-task-smart
+                    (lambda ()
+                      (setq source-buf (current-buffer))
+                      (let* ((beg (org-entry-beginning-position))
+                             (end (org-entry-end-position))
+                             (text (buffer-substring beg end)))
+                        (setq subtree-text text)
+                        (delete-region beg end)
+                        (when (and (bolp) (eolp) (not (bobp)) (not (eobp)))
+                          (delete-char 1)))))))
+        (if (not found)
+            (princ (json-encode (list (cons 'status "error")
+                                      (cons 'message "Task not found"))))
+          (with-current-buffer target-buf
+            (goto-char target-pos)
+            (let* ((target-level (org-current-level))
+                   (child-level (1+ target-level)))
+              (org-end-of-subtree t t)
+              (let ((adjusted-text
+                     (with-temp-buffer
+                       (insert subtree-text)
+                       (goto-char (point-min))
+                       (while (re-search-forward "^\\(\\*+\\)" nil t)
+                         (let* ((stars (match-string 1))
+                                (new-level (+ (length stars)
+                                              (- child-level 1)))
+                                (new-stars (make-string new-level ?*)))
+                           (replace-match new-stars)))
+                       (buffer-string))))
+                (unless (bolp) (insert "\n"))
+                (insert adjusted-text)
+                (unless (bolp) (insert "\n"))))
+            (save-buffer))
+          (when source-buf
+            (with-current-buffer source-buf
+              (save-buffer)))
+          (princ (json-encode (list (cons 'status "ok")
+                                    (cons 'refiled-to target-heading)))))))))
 
 (provide 'spacecadet-init)
 ;;; init.el ends here

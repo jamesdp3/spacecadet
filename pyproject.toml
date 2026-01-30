@@ -13,5 +13,11 @@ dependencies = [
     "mcp>=1.0.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
 [project.scripts]
 spacecadet = "server:mcp.run"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -87,6 +87,35 @@ def _result_to_str(result) -> str:
     return str(result)
 
 
+def _task_env(id: str | None, heading: str | None) -> dict:
+    """Build env dict for task lookup. At least one of id/heading required."""
+    env = {}
+    if id:
+        env["SC_ID"] = id
+    if heading:
+        env["SC_HEADING"] = heading
+    if not env:
+        raise ValueError("Either id or heading is required")
+    return env
+
+
+def validate_org_path(filename: str, param_name: str = "file") -> str:
+    """Validate that filename resolves to a path inside ORG_DIR.
+
+    Returns the filename if safe. Raises ValueError if the resolved
+    path would escape ORG_DIR (e.g. via '..' traversal or absolute paths).
+    """
+    org_dir = Path(ORG_DIR).resolve()
+    candidate = (org_dir / filename).resolve()
+    try:
+        candidate.relative_to(org_dir)
+    except ValueError:
+        raise ValueError(
+            f"Invalid {param_name}: path would escape the org directory"
+        )
+    return filename
+
+
 # --- MCP Tools ---
 
 @mcp.tool()
@@ -122,13 +151,18 @@ def add_task(
     if state:
         env["SC_STATE"] = state
     if file:
+        try:
+            validate_org_path(file, "file")
+        except ValueError as e:
+            return json.dumps({"status": "error", "message": str(e)})
         env["SC_FILE"] = file
     return _result_to_str(run_emacs("(spacecadet-add-task-from-env)", env, write=True))
 
 
 @mcp.tool()
 def update_task(
-    heading: str,
+    heading: str | None = None,
+    id: str | None = None,
     new_state: str | None = None,
     new_priority: str | None = None,
     new_deadline: str | None = None,
@@ -136,12 +170,16 @@ def update_task(
     """Update an existing task. Use this to mark tasks as DONE, change priority, etc.
 
     Args:
-        heading: The exact task heading to find
+        heading: The exact task heading to find (provide heading or id)
+        id: The task's org-id (preferred over heading)
         new_state: New TODO state - TODO, NEXT, WAITING, DONE, CANCELLED (optional)
         new_priority: New priority letter A-D (optional)
         new_deadline: New deadline date YYYY-MM-DD (optional)
     """
-    env = {"SC_HEADING": heading}
+    try:
+        env = _task_env(id, heading)
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
     if new_state:
         env["SC_NEW_STATE"] = new_state
     if new_priority:
@@ -152,15 +190,19 @@ def update_task(
 
 
 @mcp.tool()
-def delete_task(heading: str) -> str:
+def delete_task(heading: str | None = None, id: str | None = None) -> str:
     """Remove a task from the org file.
 
     Args:
-        heading: The exact task heading to find and delete
+        heading: The exact task heading to find and delete (provide heading or id)
+        id: The task's org-id (preferred over heading)
     """
+    try:
+        env = _task_env(id, heading)
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
     return _result_to_str(run_emacs(
-        "(spacecadet-delete-task-from-env)",
-        {"SC_HEADING": heading}, write=True))
+        "(spacecadet-delete-task-from-env)", env, write=True))
 
 
 @mcp.tool()
@@ -204,15 +246,19 @@ def list_tasks(
 
 
 @mcp.tool()
-def get_task(heading: str) -> str:
+def get_task(heading: str | None = None, id: str | None = None) -> str:
     """Get detailed information about a specific task.
 
     Args:
-        heading: The exact task heading to find
+        heading: The exact task heading to find (provide heading or id)
+        id: The task's org-id (preferred over heading)
     """
+    try:
+        env = _task_env(id, heading)
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
     return _result_to_str(run_emacs(
-        "(spacecadet-get-task-from-env)",
-        {"SC_HEADING": heading}))
+        "(spacecadet-get-task-from-env)", env))
 
 
 @mcp.tool()
@@ -261,15 +307,19 @@ def search_tasks(query: str) -> str:
 
 
 @mcp.tool()
-def clock_in(heading: str) -> str:
+def clock_in(heading: str | None = None, id: str | None = None) -> str:
     """Start the clock on a task. Tracks time spent working on it.
 
     Args:
-        heading: The exact task heading to clock into
+        heading: The exact task heading to clock into (provide heading or id)
+        id: The task's org-id (preferred over heading)
     """
+    try:
+        env = _task_env(id, heading)
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
     return _result_to_str(run_emacs(
-        "(spacecadet-clock-in-from-env)",
-        {"SC_HEADING": heading}, write=True))
+        "(spacecadet-clock-in-from-env)", env, write=True))
 
 
 @mcp.tool()
@@ -285,44 +335,68 @@ def clock_report() -> str:
 
 
 @mcp.tool()
-def add_note(heading: str, note: str) -> str:
+def add_note(note: str, heading: str | None = None, id: str | None = None) -> str:
     """Add a note or log entry to an existing task.
 
     Args:
-        heading: The exact task heading to find
         note: The note text to add
+        heading: The exact task heading to find (provide heading or id)
+        id: The task's org-id (preferred over heading)
     """
+    try:
+        env = _task_env(id, heading)
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
+    env["SC_NOTE"] = note
     return _result_to_str(run_emacs(
-        "(spacecadet-add-note-from-env)",
-        {"SC_HEADING": heading, "SC_NOTE": note}, write=True))
+        "(spacecadet-add-note-from-env)", env, write=True))
 
 
 @mcp.tool()
-def set_property(heading: str, property: str, value: str) -> str:
+def set_property(property: str, value: str, heading: str | None = None, id: str | None = None) -> str:
     """Set a custom property on a task (e.g. Effort, Assignee, URL).
 
     Args:
-        heading: The exact task heading to find
         property: Property name (e.g. "Effort", "Assignee", "URL")
         value: Property value (e.g. "2:00", "Alice", "https://...")
+        heading: The exact task heading to find (provide heading or id)
+        id: The task's org-id (preferred over heading)
     """
+    try:
+        env = _task_env(id, heading)
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
+    env["SC_PROPERTY"] = property
+    env["SC_VALUE"] = value
     return _result_to_str(run_emacs(
-        "(spacecadet-set-property-from-env)",
-        {"SC_HEADING": heading, "SC_PROPERTY": property, "SC_VALUE": value},
-        write=True))
+        "(spacecadet-set-property-from-env)", env, write=True))
 
 
 @mcp.tool()
-def refile_task(heading: str, target_heading: str, target_file: str | None = None) -> str:
+def refile_task(
+    target_heading: str,
+    heading: str | None = None,
+    id: str | None = None,
+    target_file: str | None = None,
+) -> str:
     """Move a task under a different heading (refile).
 
     Args:
-        heading: The exact task heading to move
         target_heading: The heading to refile under
+        heading: The exact task heading to move (provide heading or id)
+        id: The task's org-id (preferred over heading)
         target_file: Specific org filename to refile into (optional)
     """
-    env = {"SC_HEADING": heading, "SC_TARGET_HEADING": target_heading}
+    try:
+        env = _task_env(id, heading)
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
+    env["SC_TARGET_HEADING"] = target_heading
     if target_file:
+        try:
+            validate_org_path(target_file, "target_file")
+        except ValueError as e:
+            return json.dumps({"status": "error", "message": str(e)})
         env["SC_TARGET_FILE"] = target_file
     return _result_to_str(run_emacs(
         "(spacecadet-refile-task-from-env)", env, write=True))
