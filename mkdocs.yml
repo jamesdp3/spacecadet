@@ -1,0 +1,26 @@
+site_name: spacecadet
+site_url: https://jamesdp3.github.io/spacecadet
+repo_url: https://github.com/jamesdp3/spacecadet
+site_description: MCP server for AI task management through Emacs org-mode
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: deep purple
+  features:
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Tool Reference: tools.md
+  - Task IDs: task-ids.md
+  - Architecture: architecture.md
+  - Development: development.md
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences

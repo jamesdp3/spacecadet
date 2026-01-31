@@ -134,6 +134,10 @@ pytest
 
 Unit tests (path validation) run without emacs. Integration tests are skipped automatically if emacs is not installed.
 
+## Documentation
+
+Full documentation: [https://jamesdp3.github.io/spacecadet](https://jamesdp3.github.io/spacecadet)
+
 ## License
 
 MIT
