@@ -327,6 +327,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Prerequisites">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installing-emacs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing Emacs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -563,6 +580,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Prerequisites">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installing-emacs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing Emacs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -675,6 +709,21 @@
 <li><strong>Python 3.10+</strong></li>
 <li><strong>Linux or macOS</strong> -- Windows works under WSL; native Windows has no file locking</li>
 </ul>
+<h3 id="installing-emacs">Installing Emacs</h3>
+<p>Org-mode ships with Emacs, so there's nothing extra to install beyond Emacs itself.</p>
+<p><strong>macOS:</strong></p>
+<div class="highlight"><pre><span></span><code>brew<span class="w"> </span>install<span class="w"> </span>emacs
+</code></pre></div>
+<p><strong>Ubuntu / Debian / WSL:</strong></p>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>emacs-nox
+</code></pre></div>
+<p><strong>Fedora:</strong></p>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>emacs-nox
+</code></pre></div>
+<p><strong>Arch:</strong></p>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>pacman<span class="w"> </span>-S<span class="w"> </span>emacs-nox
+</code></pre></div>
+<p>The <code>-nox</code> variant is recommended for spacecadet since it runs in batch mode and doesn't need a GUI.</p>
 <h2 id="installation">Installation</h2>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/jamesdp3/spacecadet.git
 <span class="nb">cd</span><span class="w"> </span>spacecadet
