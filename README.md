@@ -8,11 +8,12 @@ Instead of relying on LLMs to track tasks in conversation context (where they fa
 
 - **Emacs** (any recent version with built-in org-mode)
 - **Python 3.10+**
+- **Linux or macOS** (Windows works under WSL; native Windows has no file locking)
 
 ## Setup
 
 ```bash
-git clone <repo-url> spacecadet
+git clone https://github.com/jamesdp3/spacecadet.git
 cd spacecadet
 ./setup.sh
 ```
@@ -52,14 +53,16 @@ export SPACECADET_ORG_DIR=~/org
 
 ## Tools
 
+Every task is assigned a unique ID on creation. Tools that operate on a specific task accept either `id` (preferred) or `heading` to identify the target task.
+
 ### Task CRUD
 
 | Tool | Description |
 |------|-------------|
-| `add_task` | Create a new task with optional priority, tags, deadline, scheduled date |
+| `add_task` | Create a new task with optional priority, tags, deadline, scheduled date. Returns the task's `id`. |
 | `update_task` | Update a task's state (e.g. mark DONE), priority, or deadline |
 | `delete_task` | Remove a task |
-| `list_tasks` | List all tasks, optionally filtered by state, priority, or tag |
+| `list_tasks` | List all tasks, optionally filtered by state, priority, or tag. Each task includes its `id`. |
 | `get_task` | Get full details of a specific task |
 
 ### Querying
@@ -102,6 +105,10 @@ tasks/*.org
 
 Each tool call invokes Emacs in batch mode with an isolated configuration (no interference with your personal Emacs setup). Emacs reads/writes org files directly, providing deterministic accuracy for all task operations.
 
+## Task IDs
+
+Every task gets a UUID assigned automatically when created via `add_task`. The ID is stored as an org-mode `ID` property and returned in all tool responses. Use the `id` parameter instead of `heading` for reliable lookups -- headings can be ambiguous if duplicated, but IDs are always unique.
+
 ## Task states
 
 Tasks follow this workflow:
@@ -117,6 +124,15 @@ TODO -> NEXT -> WAITING -> DONE
 - **B** - High priority
 - **C** - Default priority
 - **D** - Low priority
+
+## Running tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+Unit tests (path validation) run without emacs. Integration tests are skipped automatically if emacs is not installed.
 
 ## License
 

@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """spacecadet - MCP server wrapping Emacs org-mode for AI task management."""
 
-import fcntl
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
+
+# fcntl is only available on Unix; on Windows we skip file locking
+if sys.platform != "win32":
+    import fcntl
+else:
+    fcntl = None
 
 from mcp.server.fastmcp import FastMCP
 
@@ -48,7 +54,7 @@ def run_emacs(elisp_expr: str, extra_env: dict | None = None,
 
     lock_fd = None
     try:
-        if write:
+        if write and fcntl is not None:
             lock_file = _lock_path()
             lock_fd = open(lock_file, "w")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
