@@ -6,6 +6,36 @@
 - **Python 3.10+**
 - **Linux or macOS** -- Windows works under WSL; native Windows has no file locking
 
+### Installing Emacs
+
+Org-mode ships with Emacs, so there's nothing extra to install beyond Emacs itself.
+
+**macOS:**
+
+```bash
+brew install emacs
+```
+
+**Ubuntu / Debian / WSL:**
+
+```bash
+sudo apt install emacs-nox
+```
+
+**Fedora:**
+
+```bash
+sudo dnf install emacs-nox
+```
+
+**Arch:**
+
+```bash
+sudo pacman -S emacs-nox
+```
+
+The `-nox` variant is recommended for spacecadet since it runs in batch mode and doesn't need a GUI.
+
 ## Installation
 
 ```bash

@@ -10,6 +10,17 @@ Instead of relying on LLMs to track tasks in conversation context (where they fa
 - **Python 3.10+**
 - **Linux or macOS** (Windows works under WSL; native Windows has no file locking)
 
+Org-mode ships with Emacs. If you don't have Emacs installed:
+
+```bash
+brew install emacs              # macOS
+sudo apt install emacs-nox      # Ubuntu/Debian/WSL
+sudo dnf install emacs-nox      # Fedora
+sudo pacman -S emacs-nox        # Arch
+```
+
+The `-nox` variant is recommended since spacecadet runs in batch mode and doesn't need a GUI.
+
 ## Setup
 
 ```bash
