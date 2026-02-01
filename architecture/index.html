@@ -445,10 +445,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tasksorg-data-storage" class="md-nav__link">
+  <a href="#org-files-data-storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        tasks/*.org -- Data storage
+        Org files -- Data storage
       
     </span>
   </a>
@@ -511,10 +511,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#batch-mode-isolation" class="md-nav__link">
+  <a href="#daemon-architecture" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Batch mode isolation
+        Daemon architecture
       
     </span>
   </a>
@@ -639,10 +639,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tasksorg-data-storage" class="md-nav__link">
+  <a href="#org-files-data-storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        tasks/*.org -- Data storage
+        Org files -- Data storage
       
     </span>
   </a>
@@ -705,10 +705,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#batch-mode-isolation" class="md-nav__link">
+  <a href="#daemon-architecture" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Batch mode isolation
+        Daemon architecture
       
     </span>
   </a>
@@ -755,16 +755,16 @@
     v
 server.py  (Python 3.10+, FastMCP)
     |
-    |  subprocess: emacs --batch -Q --load init.el --eval &quot;(fn ...)&quot;
-    |  user data passed via environment variables
+    |  emacsclient --eval &quot;(progn (setenv ...) (fn ...))&quot;
+    |  user data passed via (setenv ...) calls
     |
     v
-emacs-config/init.el  (Emacs Lisp)
+Emacs daemon  (persistent, started on first request)
     |
     |  org-mode API: read/write/search
     |
     v
-tasks/*.org  (plain text org files)
+~/spacecadet-tasks/*.org  (plain text org files)
 </code></pre></div>
 <h2 id="components">Components</h2>
 <h3 id="serverpy-mcp-server">server.py -- MCP server</h3>
@@ -773,9 +773,10 @@ tasks/*.org  (plain text org files)
 <li><strong>MCP protocol</strong> via FastMCP (stdio transport)</li>
 <li><strong>Tool definitions</strong> with parameter validation and docstrings</li>
 <li><strong>Input sanitization</strong> -- path traversal prevention, query character filtering</li>
-<li><strong>Environment variable injection</strong> -- user data is never inlined into elisp expressions</li>
+<li><strong>Environment variable injection</strong> -- user data is passed via <code>(setenv ...)</code> calls, never inlined into elisp expressions</li>
 <li><strong>File locking</strong> -- <code>fcntl</code> advisory locks prevent concurrent write corruption (Unix only)</li>
-<li><strong>Subprocess management</strong> -- each tool call spawns a fresh <code>emacs --batch</code> process with a 30-second timeout</li>
+<li><strong>Daemon lifecycle</strong> -- starts an Emacs daemon on first request, shuts it down on exit via <code>atexit</code></li>
+<li><strong>Configuration</strong> -- resolves org directory from env var, config file, or default</li>
 </ul>
 <h3 id="emacs-configinitel-elisp-backend">emacs-config/init.el -- Elisp backend</h3>
 <p>The Emacs layer handles:</p>
@@ -787,8 +788,9 @@ tasks/*.org  (plain text org files)
 <li><strong>Clocking</strong> -- time tracking with CLOCK entries in LOGBOOK drawers</li>
 <li><strong>JSON output</strong> -- all responses are JSON-encoded for server.py to parse</li>
 </ul>
-<h3 id="tasksorg-data-storage">tasks/*.org -- Data storage</h3>
-<p>Plain text org-mode files. The default file is <code>tasks.org</code>. Tasks can span multiple files by using the <code>file</code> parameter in <code>add_task</code> or <code>SPACECADET_ORG_DIR</code> pointing to a directory with multiple <code>.org</code> files.</p>
+<h3 id="org-files-data-storage">Org files -- Data storage</h3>
+<p>Plain text org-mode files stored in the configured org directory (default: <code>~/spacecadet-tasks/</code>). The default file is <code>tasks.org</code>. Tasks can span multiple files by using the <code>file</code> parameter in <code>add_task</code> or pointing <code>SPACECADET_ORG_DIR</code> at a directory with multiple <code>.org</code> files.</p>
+<p>Since org files are plain text, they work with any file-syncing service (iCloud, Dropbox, Google Drive, OneDrive, Syncthing) for cross-machine access.</p>
 <h2 id="security-model">Security model</h2>
 <h3 id="input-injection-prevention">Input injection prevention</h3>
 <p>User-supplied data (task headings, notes, property values) is passed to Emacs via environment variables (<code>SC_HEADING</code>, <code>SC_NOTE</code>, etc.), never inlined into elisp expressions. The elisp code reads these with <code>(getenv "SC_HEADING")</code>.</p>
@@ -797,14 +799,19 @@ tasks/*.org  (plain text org files)
 <p>The <code>file</code> and <code>target_file</code> parameters are validated by <code>validate_org_path()</code> in server.py. It resolves the candidate path and checks that it falls within <code>ORG_DIR</code> using <code>Path.relative_to()</code>. Attempts to escape with <code>../</code> or absolute paths are rejected.</p>
 <h3 id="query-sanitization">Query sanitization</h3>
 <p>Org-mode match queries in <code>list_tasks</code> and <code>search_tasks</code> are filtered to allow only alphanumeric characters and a small set of operators (<code>+</code>, <code>-</code>, <code>_</code>, <code>/</code>, <code>=</code>).</p>
-<h2 id="batch-mode-isolation">Batch mode isolation</h2>
-<p>Every tool call runs <code>emacs --batch -Q --load init.el</code>. The flags mean:</p>
+<h2 id="daemon-architecture">Daemon architecture</h2>
+<p>On the first tool call, spacecadet starts a dedicated Emacs daemon:</p>
+<div class="highlight"><pre><span></span><code>emacs --daemon=spacecadet-{pid} -Q --load init.el
+</code></pre></div>
+<p>The flags mean:</p>
 <ul>
-<li><code>--batch</code> -- non-interactive, no window system</li>
+<li><code>--daemon=spacecadet-{pid}</code> -- run as a named daemon (unique per server process)</li>
 <li><code>-Q</code> -- ignore the user's <code>~/.emacs</code>, <code>~/.emacs.d/init.el</code>, and site-start files</li>
 <li><code>--load init.el</code> -- load only the spacecadet configuration</li>
 </ul>
-<p>This ensures spacecadet never interferes with or depends on the user's personal Emacs setup. Each invocation is a fresh process with no persistent state.</p>
+<p>Subsequent tool calls use <code>emacsclient --socket-name=spacecadet-{pid} --eval "..."</code> to evaluate elisp against the running daemon. This avoids the ~4 second startup cost of <code>emacs --batch</code> on each call, keeping response times under 500ms.</p>
+<p>The daemon is isolated from the user's personal Emacs setup and runs with its own socket. It is shut down automatically when the server exits via an <code>atexit</code> handler.</p>
+<p>Before each evaluation, all <code>SC_*</code> environment variables are cleared and re-set to prevent data leaking between calls. Org-mode buffers are also refreshed to ensure the daemon reads the latest file contents from disk.</p>
 <h2 id="file-locking">File locking</h2>
 <p>On Unix systems, write operations acquire an advisory lock on <code>.spacecadet.lock</code> via <code>fcntl.flock()</code>. This prevents corruption if two MCP tool calls try to write simultaneously. The lock is released when the subprocess completes.</p>
 <p>On Windows (without WSL), file locking is skipped. This is acceptable for single-client usage but means concurrent writes are not protected.</p>

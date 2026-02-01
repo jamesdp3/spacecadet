@@ -391,11 +391,39 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#custom-org-directory" class="md-nav__link">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Custom org directory
+        Task storage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Task storage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#using-a-custom-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using a custom directory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloud-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud sync
       
     </span>
   </a>
@@ -644,11 +672,39 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#custom-org-directory" class="md-nav__link">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Custom org directory
+        Task storage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Task storage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#using-a-custom-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using a custom directory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloud-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud sync
       
     </span>
   </a>
@@ -723,7 +779,7 @@
 <p><strong>Arch:</strong></p>
 <div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>pacman<span class="w"> </span>-S<span class="w"> </span>emacs-nox
 </code></pre></div>
-<p>The <code>-nox</code> variant is recommended for spacecadet since it runs in batch mode and doesn't need a GUI.</p>
+<p>The <code>-nox</code> variant is recommended since spacecadet doesn't need a GUI.</p>
 <h2 id="installation">Installation</h2>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/jamesdp3/spacecadet.git
 <span class="nb">cd</span><span class="w"> </span>spacecadet
@@ -733,7 +789,6 @@
 <ol>
 <li>Checks that <code>emacs</code> and <code>python3</code> are in your PATH</li>
 <li>Installs the <code>mcp</code> Python package</li>
-<li>Creates a default <code>tasks/tasks.org</code> file</li>
 <li>Verifies the Emacs configuration loads correctly</li>
 <li>Prints configuration instructions</li>
 </ol>
@@ -753,11 +808,19 @@
 <h3 id="claude-code">Claude Code</h3>
 <div class="highlight"><pre><span></span><code>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>spacecadet<span class="w"> </span>python3<span class="w"> </span>/path/to/spacecadet/server.py
 </code></pre></div>
-<h3 id="custom-org-directory">Custom org directory</h3>
-<p>By default, tasks are stored in <code>spacecadet/tasks/</code>. To use an existing org directory:</p>
+<h2 id="task-storage">Task storage</h2>
+<p>On first run, spacecadet automatically creates <code>~/spacecadet-tasks/tasks.org</code> and saves this path to <code>.spacecadet.conf</code> (in the project root). Tasks persist across restarts.</p>
+<p>The directory is resolved in this order:</p>
+<ol>
+<li><strong><code>SPACECADET_ORG_DIR</code> environment variable</strong> -- highest priority</li>
+<li><strong><code>.spacecadet.conf</code> file</strong> -- persisted from previous run</li>
+<li><strong><code>~/spacecadet-tasks/</code></strong> -- default on first run</li>
+</ol>
+<h3 id="using-a-custom-directory">Using a custom directory</h3>
+<p>To use an existing org directory (e.g. your personal org-mode files):</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">SPACECADET_ORG_DIR</span><span class="o">=</span>~/org
 </code></pre></div>
-<p>Set this in your shell profile or pass it as an environment variable in your MCP client config:</p>
+<p>Or pass it in your MCP client config:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;mcpServers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nt">&quot;spacecadet&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
@@ -770,6 +833,44 @@
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
+<p>You can also edit <code>.spacecadet.conf</code> directly -- it contains a single line with the absolute path to the org directory.</p>
+<h3 id="cloud-sync">Cloud sync</h3>
+<p>Point <code>SPACECADET_ORG_DIR</code> at a cloud-synced folder to access your tasks from any machine:</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Example path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>iCloud</strong></td>
+<td><code>~/Library/Mobile Documents/com~apple~CloudDocs/org</code></td>
+</tr>
+<tr>
+<td><strong>Dropbox</strong></td>
+<td><code>~/Dropbox/org</code></td>
+</tr>
+<tr>
+<td><strong>Google Drive</strong></td>
+<td><code>~/Google Drive/My Drive/org</code></td>
+</tr>
+<tr>
+<td><strong>OneDrive</strong></td>
+<td><code>~/OneDrive/org</code></td>
+</tr>
+<tr>
+<td><strong>Syncthing</strong></td>
+<td><code>~/Sync/org</code></td>
+</tr>
+</tbody>
+</table>
+<p>Since tasks are plain <code>.org</code> text files, any file-syncing service works. If you already use org-mode, point spacecadet at your existing org directory and it will read your files directly.</p>
+<div class="admonition tip">
+<p class="admonition-title">Multiple machines</p>
+<p>Install spacecadet on each machine and set <code>SPACECADET_ORG_DIR</code> to the same synced folder. Each instance runs its own Emacs daemon independently -- there are no server-side dependencies or databases to coordinate.</p>
+</div>
 <h2 id="task-states">Task states</h2>
 <p>Tasks follow this workflow:</p>
 <div class="highlight"><pre><span></span><code>TODO -&gt; NEXT -&gt; WAITING -&gt; DONE

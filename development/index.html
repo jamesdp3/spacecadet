@@ -606,8 +606,6 @@
 ├── server.py              # MCP server (Python, FastMCP)
 ├── emacs-config/
 │   └── init.el            # Elisp backend (org-mode operations)
-├── tasks/
-│   └── tasks.org          # Default task storage
 ├── tests/
 │   ├── __init__.py
 │   ├── test_path_validation.py   # Unit tests (no emacs required)
@@ -617,9 +615,11 @@
 ├── pyproject.toml         # Python project metadata
 ├── requirements.txt       # Python dependencies
 ├── setup.sh               # Setup script
+├── .spacecadet.conf       # Auto-generated: path to org directory (gitignored)
 ├── LICENSE                # MIT license
 └── README.md
 </code></pre></div>
+<p>Task data is stored outside the repo (default: <code>~/spacecadet-tasks/</code>). See <a href="../getting-started/#task-storage">Getting Started</a> for configuration.</p>
 <h2 id="running-tests">Running tests</h2>
 <p>Install dev dependencies and run:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[dev]&quot;</span>
