@@ -20,7 +20,39 @@ from mcp.server.fastmcp import FastMCP
 # --- Configuration ---
 ROOT_DIR = Path(__file__).parent.resolve()
 INIT_FILE = ROOT_DIR / "emacs-config" / "init.el"
-ORG_DIR = os.environ.get("SPACECADET_ORG_DIR", str(ROOT_DIR / "tasks"))
+CONFIG_FILE = ROOT_DIR / ".spacecadet.conf"
+DEFAULT_ORG_DIR = Path.home() / "spacecadet-tasks"
+
+
+def _resolve_org_dir() -> str:
+    """Determine the org directory, creating config and dir if needed.
+
+    Priority: SPACECADET_ORG_DIR env var > .spacecadet.conf > default.
+    On first run (no env var, no config), creates ~/spacecadet-tasks and
+    writes the path to .spacecadet.conf for future runs.
+    """
+    # 1. Environment variable takes precedence
+    from_env = os.environ.get("SPACECADET_ORG_DIR")
+    if from_env:
+        org_dir = Path(from_env)
+    # 2. Config file
+    elif CONFIG_FILE.exists():
+        org_dir = Path(CONFIG_FILE.read_text().strip())
+    # 3. First run — use default and save config
+    else:
+        org_dir = DEFAULT_ORG_DIR
+        CONFIG_FILE.write_text(str(org_dir) + "\n")
+
+    # Ensure the directory and a starter tasks.org exist
+    org_dir.mkdir(parents=True, exist_ok=True)
+    tasks_file = org_dir / "tasks.org"
+    if not tasks_file.exists():
+        tasks_file.write_text("#+TITLE: Spacecadet Tasks\n#+STARTUP: overview\n\n")
+
+    return str(org_dir)
+
+
+ORG_DIR = _resolve_org_dir()
 
 SOCKET_NAME = f"spacecadet-{os.getpid()}"
 _daemon_started = False

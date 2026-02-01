@@ -6,5 +6,7 @@ dist/
 build/
 *.org~
 .spacecadet.lock
+.spacecadet.conf
 .env
 site/
+tasks/
