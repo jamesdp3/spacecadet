@@ -116,7 +116,7 @@ Calls CALLBACK with point on the matching heading. Returns t if found."
      (heading (spacecadet--find-task heading callback))
      (t (princ (json-encode (list (cons 'status "error")
                                   (cons 'message "SC_ID or SC_HEADING required"))))
-        (kill-emacs 1)))))
+        nil))))
 
 (defun spacecadet--json-list (lst)
   "Encode LST as JSON, ensuring empty list outputs [] not null."
@@ -259,7 +259,7 @@ Calls CALLBACK with point on the matching heading. Returns t if found."
     (unless heading
       (princ (json-encode (list (cons 'status "error")
                                 (cons 'message "SC_HEADING not set"))))
-      (kill-emacs 1))
+      nil)
     ;; Ensure file exists with header
     (unless (file-exists-p target-file)
       (with-temp-file target-file
@@ -437,7 +437,7 @@ directly rather than relying on org-clock state."
     (unless note
       (princ (json-encode (list (cons 'status "error")
                                 (cons 'message "SC_NOTE required"))))
-      (kill-emacs 1))
+      nil)
     (let ((found (spacecadet--find-task-smart
                   (lambda ()
                     (let ((beg (org-entry-beginning-position))
@@ -466,7 +466,7 @@ directly rather than relying on org-clock state."
     (unless (and property value)
       (princ (json-encode (list (cons 'status "error")
                                 (cons 'message "SC_PROPERTY and SC_VALUE required"))))
-      (kill-emacs 1))
+      nil)
     (let ((found (spacecadet--find-task-smart
                   (lambda ()
                     (org-set-property property value)
@@ -494,7 +494,7 @@ SC_ID or SC_HEADING, SC_TARGET_HEADING, SC_TARGET_FILE from environment."
     (unless target-heading
       (princ (json-encode (list (cons 'status "error")
                                 (cons 'message "SC_TARGET_HEADING required"))))
-      (kill-emacs 1))
+      nil)
     ;; Find the target heading
     (let ((files (if target-file
                      (list (expand-file-name target-file spacecadet-org-dir))

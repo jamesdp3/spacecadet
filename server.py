@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """spacecadet - MCP server wrapping Emacs org-mode for AI task management."""
 
+import atexit
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # fcntl is only available on Unix; on Windows we skip file locking
@@ -20,6 +22,9 @@ ROOT_DIR = Path(__file__).parent.resolve()
 INIT_FILE = ROOT_DIR / "emacs-config" / "init.el"
 ORG_DIR = os.environ.get("SPACECADET_ORG_DIR", str(ROOT_DIR / "tasks"))
 
+SOCKET_NAME = f"spacecadet-{os.getpid()}"
+_daemon_started = False
+
 mcp = FastMCP("spacecadet")
 
 
@@ -28,12 +33,66 @@ def _lock_path() -> Path:
     return Path(ORG_DIR) / ".spacecadet.lock"
 
 
+def _elisp_escape(s: str) -> str:
+    """Escape a string for embedding in an elisp double-quoted string."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _start_daemon():
+    """Start an Emacs daemon for this server process."""
+    global _daemon_started
+    if _daemon_started:
+        return
+
+    org_dir_escaped = _elisp_escape(ORG_DIR)
+
+    subprocess.Popen(
+        [
+            "emacs", f"--daemon={SOCKET_NAME}", "-Q",
+            "--load", str(INIT_FILE),
+            "--eval", f'(setenv "SPACECADET_ORG_DIR" "{org_dir_escaped}")',
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Wait for the daemon socket to appear
+    for _ in range(100):
+        try:
+            result = subprocess.run(
+                ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", "(+ 1 1)"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if result.returncode == 0:
+                _daemon_started = True
+                return
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        time.sleep(0.1)
+
+    raise RuntimeError("Emacs daemon failed to start within 10 seconds")
+
+
+def _stop_daemon():
+    """Kill the Emacs daemon on exit."""
+    try:
+        subprocess.run(
+            ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", "(kill-emacs)"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        pass
+
+
+atexit.register(_stop_daemon)
+
+
 def run_emacs(elisp_expr: str, extra_env: dict | None = None,
               timeout: int = 30, write: bool = False):
-    """Run an elisp expression in emacs batch mode.
+    """Run an elisp expression via emacsclient against the daemon.
 
-    User-supplied data is passed via environment variables (extra_env),
-    never inlined in the elisp expression, to prevent injection.
+    User-supplied data is passed via (setenv ...) calls in the elisp,
+    never inlined in the main expression, to prevent injection.
 
     Args:
         elisp_expr: The elisp expression to evaluate (no user data).
@@ -41,16 +100,42 @@ def run_emacs(elisp_expr: str, extra_env: dict | None = None,
         timeout: Subprocess timeout in seconds.
         write: If True, acquire a file lock for write safety.
     """
-    env = os.environ.copy()
-    env["SPACECADET_ORG_DIR"] = ORG_DIR
-    if extra_env:
-        env.update(extra_env)
+    _start_daemon()
 
-    cmd = [
-        "emacs", "--batch", "-Q",
-        "--load", str(INIT_FILE),
-        "--eval", elisp_expr,
-    ]
+    # Build a progn that sets env vars then evaluates the expression.
+    # The elisp reads env vars via (getenv ...), same as before.
+    # Clear all SC_* env vars first to prevent leakage between calls.
+    sc_vars = ["SC_ID", "SC_HEADING", "SC_PRIORITY", "SC_TAGS", "SC_DEADLINE",
+               "SC_SCHEDULED", "SC_STATE", "SC_FILE", "SC_NEW_STATE",
+               "SC_NEW_PRIORITY", "SC_NEW_DEADLINE", "SC_NOTE", "SC_PROPERTY",
+               "SC_VALUE", "SC_TARGET_HEADING", "SC_TARGET_FILE"]
+    setenv_forms = [f'(setenv "{v}" nil)' for v in sc_vars]
+    setenv_forms.append(f'(setenv "SPACECADET_ORG_DIR" "{_elisp_escape(ORG_DIR)}")')
+    if extra_env:
+        for k, v in extra_env.items():
+            setenv_forms.append(f'(setenv "{_elisp_escape(k)}" "{_elisp_escape(v)}")')
+
+    # Also re-set spacecadet-org-dir so the elisp functions see the current value
+    setenv_forms.append(
+        f'(setq spacecadet-org-dir "{_elisp_escape(ORG_DIR)}")'
+    )
+    setenv_forms.append(
+        f'(setq org-agenda-files (list spacecadet-org-dir))'
+    )
+
+    # Kill all org buffers so the daemon reads fresh from disk on next access.
+    # We kill rather than revert because revert-buffer triggers expensive mode
+    # hooks (font-lock, org-mode parsing) that can hang on slow filesystems.
+    refresh_form = (
+        '(dolist (buf (buffer-list))'
+        '  (with-current-buffer buf'
+        '    (when (and buffer-file-name (string-suffix-p ".org" buffer-file-name))'
+        '      (set-buffer-modified-p nil)'
+        '      (kill-buffer buf))))'
+    )
+    wrapped = f'(progn {" ".join(setenv_forms)} {refresh_form} (with-output-to-string {elisp_expr}))'
+
+    cmd = ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", wrapped]
 
     lock_fd = None
     try:
@@ -60,23 +145,32 @@ def run_emacs(elisp_expr: str, extra_env: dict | None = None,
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, env=env,
+            cmd, capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         return {"status": "error", "message": "Emacs command timed out"}
     except FileNotFoundError:
-        return {"status": "error", "message": "emacs not found in PATH"}
+        return {"status": "error", "message": "emacsclient not found in PATH"}
     finally:
         if lock_fd:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             lock_fd.close()
 
     stdout = result.stdout.strip()
-    if not stdout:
+    if not stdout or stdout == '""' or stdout == "nil":
         stderr = result.stderr.strip()
         if stderr:
             return {"status": "error", "message": stderr[:500]}
         return {"status": "ok", "message": "No output"}
+
+    # emacsclient --eval prints the elisp string representation, which wraps
+    # the output in quotes and escapes inner quotes. Unwrap it.
+    if stdout.startswith('"') and stdout.endswith('"'):
+        # Remove outer quotes and unescape the emacsclient wrapper layer only.
+        # The inner JSON is already properly escaped, so we just undo the
+        # outer elisp string quoting: \" -> " and \\ -> \
+        stdout = stdout[1:-1]
+        stdout = stdout.replace('\\\\', '\x00').replace('\\"', '"').replace('\x00', '\\')
 
     try:
         parsed = json.loads(stdout)
