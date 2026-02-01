@@ -501,7 +501,8 @@ SC_ID or SC_HEADING, SC_TARGET_HEADING, SC_TARGET_FILE from environment."
             (org-mode)
             (goto-char (point-min))
             (when (re-search-forward
-                   (format "^\\*+[ \t]+%s" (regexp-quote target-heading))
+                   (format "^\\*+[ \t]+\\(?:[A-Z]+[ \t]+\\)?%s"
+                           (regexp-quote target-heading))
                    nil t)
               (setq target-pos (point)
                     target-buf (current-buffer)))))))

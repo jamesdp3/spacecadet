@@ -2,10 +2,12 @@
 """spacecadet - MCP server wrapping Emacs org-mode for AI task management."""
 
 import atexit
+import datetime
 import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -16,6 +18,9 @@ else:
     fcntl = None
 
 from mcp.server.fastmcp import FastMCP
+
+VALID_STATES = {"TODO", "NEXT", "WAITING", "DONE", "CANCELLED"}
+VALID_PRIORITIES = {"A", "B", "C", "D"}
 
 # --- Configuration ---
 ROOT_DIR = Path(__file__).parent.resolve()
@@ -52,17 +57,28 @@ def _resolve_org_dir() -> str:
     return str(org_dir)
 
 
-ORG_DIR = _resolve_org_dir()
+_ORG_DIR = None
 
 SOCKET_NAME = f"spacecadet-{os.getpid()}"
 _daemon_started = False
+_shutting_down = False
+_active_calls = 0
+_call_lock = threading.Lock()
 
 mcp = FastMCP("spacecadet")
 
 
+def _get_org_dir() -> str:
+    """Lazily resolve and cache the org directory on first use."""
+    global _ORG_DIR
+    if _ORG_DIR is None:
+        _ORG_DIR = _resolve_org_dir()
+    return _ORG_DIR
+
+
 def _lock_path() -> Path:
     """Path for the file lock."""
-    return Path(ORG_DIR) / ".spacecadet.lock"
+    return Path(_get_org_dir()) / ".spacecadet.lock"
 
 
 def _elisp_escape(s: str) -> str:
@@ -79,7 +95,7 @@ def _start_daemon():
     if _daemon_started:
         return
 
-    org_dir_escaped = _elisp_escape(ORG_DIR)
+    org_dir_escaped = _elisp_escape(_get_org_dir())
 
     _daemon_proc = subprocess.Popen(
         [
@@ -125,8 +141,15 @@ def _start_daemon():
 
 
 def _stop_daemon():
-    """Kill the Emacs daemon on exit."""
-    global _daemon_proc
+    """Kill the Emacs daemon on exit, waiting for in-flight calls to finish."""
+    global _daemon_proc, _shutting_down
+    _shutting_down = True
+    # Wait for any active run_emacs calls to complete (up to 30s)
+    for _ in range(300):
+        with _call_lock:
+            if _active_calls == 0:
+                break
+        time.sleep(0.1)
     try:
         subprocess.run(
             ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", "(kill-emacs)"],
@@ -161,84 +184,94 @@ def run_emacs(elisp_expr: str, extra_env: dict | None = None,
         timeout: Subprocess timeout in seconds.
         write: If True, acquire a file lock for write safety.
     """
-    _start_daemon()
+    global _active_calls
+    if _shutting_down:
+        return {"status": "error", "message": "Server is shutting down"}
 
-    # Build a progn that sets env vars then evaluates the expression.
-    # The elisp reads env vars via (getenv ...), same as before.
-    # Clear all SC_* env vars first to prevent leakage between calls.
-    sc_vars = ["SC_ID", "SC_HEADING", "SC_PRIORITY", "SC_TAGS", "SC_DEADLINE",
-               "SC_SCHEDULED", "SC_STATE", "SC_FILE", "SC_NEW_STATE",
-               "SC_NEW_PRIORITY", "SC_NEW_DEADLINE", "SC_NOTE", "SC_PROPERTY",
-               "SC_VALUE", "SC_TARGET_HEADING", "SC_TARGET_FILE", "SC_QUERY"]
-    setenv_forms = [f'(setenv "{v}" nil)' for v in sc_vars]
-    setenv_forms.append(f'(setenv "SPACECADET_ORG_DIR" "{_elisp_escape(ORG_DIR)}")')
-    if extra_env:
-        for k, v in extra_env.items():
-            setenv_forms.append(f'(setenv "{_elisp_escape(k)}" "{_elisp_escape(v)}")')
-
-    # Also re-set spacecadet-org-dir so the elisp functions see the current value
-    setenv_forms.append(
-        f'(setq spacecadet-org-dir "{_elisp_escape(ORG_DIR)}")'
-    )
-    setenv_forms.append(
-        f'(setq org-agenda-files (list spacecadet-org-dir))'
-    )
-
-    # Kill all org buffers so the daemon reads fresh from disk on next access.
-    # We kill rather than revert because revert-buffer triggers expensive mode
-    # hooks (font-lock, org-mode parsing) that can hang on slow filesystems.
-    refresh_form = (
-        '(dolist (buf (buffer-list))'
-        '  (with-current-buffer buf'
-        '    (when (and buffer-file-name (string-suffix-p ".org" buffer-file-name))'
-        '      (set-buffer-modified-p nil)'
-        '      (kill-buffer buf))))'
-    )
-    wrapped = f'(progn {" ".join(setenv_forms)} {refresh_form} (with-output-to-string {elisp_expr}))'
-
-    cmd = ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", wrapped]
-
-    lock_fd = None
+    with _call_lock:
+        _active_calls += 1
     try:
-        if write and fcntl is not None:
-            lock_file = _lock_path()
-            lock_fd = open(lock_file, "w")
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _start_daemon()
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+        # Build a progn that sets env vars then evaluates the expression.
+        # The elisp reads env vars via (getenv ...), same as before.
+        # Clear all SC_* env vars first to prevent leakage between calls.
+        sc_vars = ["SC_ID", "SC_HEADING", "SC_PRIORITY", "SC_TAGS", "SC_DEADLINE",
+                   "SC_SCHEDULED", "SC_STATE", "SC_FILE", "SC_NEW_STATE",
+                   "SC_NEW_PRIORITY", "SC_NEW_DEADLINE", "SC_NOTE", "SC_PROPERTY",
+                   "SC_VALUE", "SC_TARGET_HEADING", "SC_TARGET_FILE", "SC_QUERY"]
+        setenv_forms = [f'(setenv "{v}" nil)' for v in sc_vars]
+        setenv_forms.append(f'(setenv "SPACECADET_ORG_DIR" "{_elisp_escape(_get_org_dir())}")')
+        if extra_env:
+            for k, v in extra_env.items():
+                setenv_forms.append(f'(setenv "{_elisp_escape(k)}" "{_elisp_escape(v)}")')
+
+        # Also re-set spacecadet-org-dir so the elisp functions see the current value
+        setenv_forms.append(
+            f'(setq spacecadet-org-dir "{_elisp_escape(_get_org_dir())}")'
         )
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": "Emacs command timed out"}
-    except FileNotFoundError:
-        return {"status": "error", "message": "emacsclient not found in PATH"}
+        setenv_forms.append(
+            f'(setq org-agenda-files (list spacecadet-org-dir))'
+        )
+
+        # Kill all org buffers so the daemon reads fresh from disk on next access.
+        # We kill rather than revert because revert-buffer triggers expensive mode
+        # hooks (font-lock, org-mode parsing) that can hang on slow filesystems.
+        refresh_form = (
+            '(dolist (buf (buffer-list))'
+            '  (with-current-buffer buf'
+            '    (when (and buffer-file-name (string-suffix-p ".org" buffer-file-name))'
+            '      (set-buffer-modified-p nil)'
+            '      (kill-buffer buf))))'
+        )
+        wrapped = f'(progn {" ".join(setenv_forms)} {refresh_form} (with-output-to-string {elisp_expr}))'
+
+        cmd = ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", wrapped]
+
+        lock_fd = None
+        try:
+            if write and fcntl is not None:
+                lock_file = _lock_path()
+                lock_fd = open(lock_file, "w")
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "message": "Emacs command timed out"}
+        except FileNotFoundError:
+            return {"status": "error", "message": "emacsclient not found in PATH"}
+        finally:
+            if lock_fd:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_fd.close()
+
+        stdout = result.stdout.strip()
+        if not stdout or stdout == '""' or stdout == "nil":
+            stderr = result.stderr.strip()
+            if stderr:
+                return {"status": "error", "message": stderr[:500]}
+            return {"status": "ok", "message": "No output"}
+
+        # emacsclient --eval prints the elisp string representation, which wraps
+        # the output in quotes and escapes inner quotes. Unwrap it.
+        if stdout.startswith('"') and stdout.endswith('"'):
+            # Remove outer quotes and unescape the emacsclient wrapper layer only.
+            # The inner JSON is already properly escaped, so we just undo the
+            # outer elisp string quoting: \" -> " and \\ -> \
+            stdout = stdout[1:-1]
+            stdout = stdout.replace('\\\\', '\x00').replace('\\"', '"').replace('\x00', '\\')
+
+        try:
+            parsed = json.loads(stdout)
+            # Ensure we never return None (elisp nil -> JSON null)
+            return parsed if parsed is not None else []
+        except json.JSONDecodeError:
+            return stdout
     finally:
-        if lock_fd:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            lock_fd.close()
-
-    stdout = result.stdout.strip()
-    if not stdout or stdout == '""' or stdout == "nil":
-        stderr = result.stderr.strip()
-        if stderr:
-            return {"status": "error", "message": stderr[:500]}
-        return {"status": "ok", "message": "No output"}
-
-    # emacsclient --eval prints the elisp string representation, which wraps
-    # the output in quotes and escapes inner quotes. Unwrap it.
-    if stdout.startswith('"') and stdout.endswith('"'):
-        # Remove outer quotes and unescape the emacsclient wrapper layer only.
-        # The inner JSON is already properly escaped, so we just undo the
-        # outer elisp string quoting: \" -> " and \\ -> \
-        stdout = stdout[1:-1]
-        stdout = stdout.replace('\\\\', '\x00').replace('\\"', '"').replace('\x00', '\\')
-
-    try:
-        parsed = json.loads(stdout)
-        # Ensure we never return None (elisp nil -> JSON null)
-        return parsed if parsed is not None else []
-    except json.JSONDecodeError:
-        return stdout
+        with _call_lock:
+            _active_calls -= 1
 
 
 def _result_to_str(result) -> str:
@@ -266,7 +299,7 @@ def validate_org_path(filename: str, param_name: str = "file") -> str:
     Returns the filename if safe. Raises ValueError if the resolved
     path would escape ORG_DIR (e.g. via '..' traversal or absolute paths).
     """
-    org_dir = Path(ORG_DIR).resolve()
+    org_dir = Path(_get_org_dir()).resolve()
     candidate = (org_dir / filename).resolve()
     try:
         candidate.relative_to(org_dir)
@@ -302,6 +335,8 @@ def add_task(
     """
     env = {"SC_HEADING": heading}
     if priority:
+        if priority.upper() not in VALID_PRIORITIES:
+            return json.dumps({"status": "error", "message": f"Invalid priority '{priority}'. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"})
         env["SC_PRIORITY"] = priority
     if tags:
         env["SC_TAGS"] = tags
@@ -310,6 +345,8 @@ def add_task(
     if scheduled:
         env["SC_SCHEDULED"] = scheduled
     if state:
+        if state.upper() not in VALID_STATES:
+            return json.dumps({"status": "error", "message": f"Invalid state '{state}'. Must be one of: {', '.join(sorted(VALID_STATES))}"})
         env["SC_STATE"] = state
     if file:
         try:
@@ -342,8 +379,12 @@ def update_task(
     except ValueError as e:
         return json.dumps({"status": "error", "message": str(e)})
     if new_state:
+        if new_state.upper() not in VALID_STATES:
+            return json.dumps({"status": "error", "message": f"Invalid state '{new_state}'. Must be one of: {', '.join(sorted(VALID_STATES))}"})
         env["SC_NEW_STATE"] = new_state
     if new_priority:
+        if new_priority.upper() not in VALID_PRIORITIES:
+            return json.dumps({"status": "error", "message": f"Invalid priority '{new_priority}'. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"})
         env["SC_NEW_PRIORITY"] = new_priority
     if new_deadline:
         env["SC_NEW_DEADLINE"] = new_deadline
@@ -384,7 +425,7 @@ def list_tasks(
     parts = []
     if tag:
         # Tags should be simple identifiers
-        safe_tag = "".join(c for c in tag if c.isalnum() or c == "_")
+        safe_tag = "".join(c for c in tag if c.isalnum() or c in "_-")
         parts.append(f"+{safe_tag}")
     if priority:
         safe_pri = priority.upper()[0] if priority else ""
@@ -435,16 +476,27 @@ def get_agenda(
         range_start: Start of date range YYYY-MM-DD (optional)
         range_end: End of date range YYYY-MM-DD (optional)
     """
-    # Date strings are validated by org-read-date in elisp; we sanitize here too
-    def safe_date(d: str) -> str:
-        return "".join(c for c in d if c.isdigit() or c == "-")
+    def validate_date(d: str, name: str) -> str:
+        """Validate YYYY-MM-DD format and return sanitized string."""
+        sanitized = "".join(c for c in d if c.isdigit() or c == "-")
+        try:
+            datetime.date.fromisoformat(sanitized)
+        except ValueError:
+            raise ValueError(f"Invalid {name}: '{d}' is not a valid YYYY-MM-DD date")
+        return sanitized
 
-    if range_start and range_end:
-        expr = f'(spacecadet-agenda-for-range "{safe_date(range_start)}" "{safe_date(range_end)}")'
-    elif date:
-        expr = f'(spacecadet-agenda-for-date "{safe_date(date)}")'
-    else:
-        expr = '(spacecadet-agenda-to-stdout "d")'
+    try:
+        if range_start and range_end:
+            rs = validate_date(range_start, "range_start")
+            re_ = validate_date(range_end, "range_end")
+            expr = f'(spacecadet-agenda-for-range "{rs}" "{re_}")'
+        elif date:
+            d = validate_date(date, "date")
+            expr = f'(spacecadet-agenda-for-date "{d}")'
+        else:
+            expr = '(spacecadet-agenda-to-stdout "d")'
+    except ValueError as e:
+        return json.dumps({"status": "error", "message": str(e)})
     return _result_to_str(run_emacs(expr))
 
 
@@ -464,7 +516,7 @@ def search_tasks(query: str) -> str:
     # Sanitize: only allow alphanumeric and org-mode match operators
     safe_query = "".join(c for c in query if c.isalnum() or c in "+-_/= ")
     env = {"SC_QUERY": safe_query}
-    return _result_to_str(run_emacs("(spacecadet-match-query (spacecadet--env \"SC_QUERY\"))", env))
+    return _result_to_str(run_emacs('(spacecadet-match-to-json (spacecadet--env "SC_QUERY"))', env))
 
 
 @mcp.tool()

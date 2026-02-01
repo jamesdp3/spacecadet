@@ -23,7 +23,7 @@ def org_dir(tmp_path, monkeypatch):
     (tasks_dir / "tasks.org").write_text(
         "#+TITLE: Test Tasks\n#+STARTUP: overview\n\n"
     )
-    monkeypatch.setattr("server.ORG_DIR", str(tasks_dir))
+    monkeypatch.setattr("server._ORG_DIR", str(tasks_dir))
     return tasks_dir
 
 
@@ -205,3 +205,106 @@ class TestErrorPaths:
         update_task(id=task_id, new_state="DONE")
         get_result = json.loads(get_task(id=task_id))
         assert get_result["todo"] == "DONE"
+
+    def test_add_task_invalid_state(self, org_dir):
+        from server import add_task
+        result = json.loads(add_task(heading="Bad state", state="BOGUS"))
+        assert result["status"] == "error"
+        assert "Invalid state" in result["message"]
+
+    def test_add_task_invalid_priority(self, org_dir):
+        from server import add_task
+        result = json.loads(add_task(heading="Bad pri", priority="Z"))
+        assert result["status"] == "error"
+        assert "Invalid priority" in result["message"]
+
+    def test_update_task_invalid_state(self, org_dir):
+        from server import add_task, update_task
+        add_result = json.loads(add_task(heading="Valid task"))
+        task_id = add_result["id"]
+        result = json.loads(update_task(id=task_id, new_state="BOGUS"))
+        assert result["status"] == "error"
+        assert "Invalid state" in result["message"]
+
+    def test_update_task_invalid_priority(self, org_dir):
+        from server import add_task, update_task
+        add_result = json.loads(add_task(heading="Valid task 2"))
+        task_id = add_result["id"]
+        result = json.loads(update_task(id=task_id, new_priority="Z"))
+        assert result["status"] == "error"
+        assert "Invalid priority" in result["message"]
+
+
+class TestClockOut:
+    def test_clock_out_no_active_clock(self, org_dir):
+        from server import clock_out
+        result = json.loads(clock_out())
+        assert result["status"] == "error"
+        assert "no open clock" in result["message"].lower()
+
+
+class TestRefileSuccess:
+    def test_refile_under_new_parent(self, org_dir):
+        """Create a parent heading, then refile a task under it."""
+        from server import add_task, refile_task, get_task
+        # Create a parent task and a child task
+        parent = json.loads(add_task(heading="Projects"))
+        assert parent["status"] == "ok"
+        child = json.loads(add_task(heading="Sub task"))
+        assert child["status"] == "ok"
+        child_id = child["id"]
+        result = json.loads(refile_task(
+            id=child_id,
+            target_heading="Projects",
+        ))
+        assert result["status"] == "ok"
+        # Task should still be retrievable
+        get_result = json.loads(get_task(id=child_id))
+        assert get_result["heading"] == "Sub task"
+
+
+class TestGetAgenda:
+    def test_agenda_specific_date(self, org_dir):
+        from server import add_task, get_agenda
+        add_task(heading="Dated task", deadline="2025-06-15")
+        result = get_agenda(date="2025-06-15")
+        assert isinstance(result, str)
+
+    def test_agenda_date_range(self, org_dir):
+        from server import get_agenda
+        result = get_agenda(range_start="2025-06-01", range_end="2025-06-30")
+        assert isinstance(result, str)
+
+    def test_agenda_invalid_date(self, org_dir):
+        from server import get_agenda
+        result = json.loads(get_agenda(date="2025-13-99"))
+        assert result["status"] == "error"
+        assert "not a valid" in result["message"]
+
+    def test_agenda_invalid_range(self, org_dir):
+        from server import get_agenda
+        result = json.loads(get_agenda(range_start="2025-02-30", range_end="2025-06-30"))
+        assert result["status"] == "error"
+
+
+class TestSearchTasks:
+    def test_search_by_tag(self, org_dir):
+        from server import add_task, search_tasks
+        add_task(heading="Searchable", tags="findme")
+        result = json.loads(search_tasks(query="+findme"))
+        assert isinstance(result, list)
+        assert len(result) >= 1
+        assert any(t["heading"] == "Searchable" for t in result)
+
+    def test_search_no_results(self, org_dir):
+        from server import search_tasks
+        result = json.loads(search_tasks(query="+nonexistenttag"))
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_search_by_state(self, org_dir):
+        from server import add_task, search_tasks
+        add_task(heading="State search")
+        result = json.loads(search_tasks(query="/TODO"))
+        assert isinstance(result, list)
+        assert len(result) >= 1

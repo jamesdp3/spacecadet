@@ -18,34 +18,34 @@ def org_dir(tmp_path):
 
 class TestValidateOrgPath:
     def test_simple_filename(self, org_dir, monkeypatch):
-        monkeypatch.setattr("server.ORG_DIR", org_dir)
+        monkeypatch.setattr("server._ORG_DIR", org_dir)
         assert validate_org_path("tasks.org") == "tasks.org"
 
     def test_subdirectory(self, org_dir, monkeypatch):
-        monkeypatch.setattr("server.ORG_DIR", org_dir)
+        monkeypatch.setattr("server._ORG_DIR", org_dir)
         assert validate_org_path("subdir/tasks.org") == "subdir/tasks.org"
 
     def test_dot_slash(self, org_dir, monkeypatch):
-        monkeypatch.setattr("server.ORG_DIR", org_dir)
+        monkeypatch.setattr("server._ORG_DIR", org_dir)
         assert validate_org_path("./tasks.org") == "./tasks.org"
 
     def test_parent_traversal_rejected(self, org_dir, monkeypatch):
-        monkeypatch.setattr("server.ORG_DIR", org_dir)
+        monkeypatch.setattr("server._ORG_DIR", org_dir)
         with pytest.raises(ValueError, match="escape"):
             validate_org_path("../../etc/passwd")
 
     def test_absolute_path_outside_rejected(self, org_dir, monkeypatch):
-        monkeypatch.setattr("server.ORG_DIR", org_dir)
+        monkeypatch.setattr("server._ORG_DIR", org_dir)
         with pytest.raises(ValueError, match="escape"):
             validate_org_path("/tmp/evil.org")
 
     def test_sneaky_traversal_rejected(self, org_dir, monkeypatch):
-        monkeypatch.setattr("server.ORG_DIR", org_dir)
+        monkeypatch.setattr("server._ORG_DIR", org_dir)
         with pytest.raises(ValueError, match="escape"):
             validate_org_path("subdir/../../etc/passwd")
 
     def test_custom_param_name_in_error(self, org_dir, monkeypatch):
-        monkeypatch.setattr("server.ORG_DIR", org_dir)
+        monkeypatch.setattr("server._ORG_DIR", org_dir)
         with pytest.raises(ValueError, match="target_file"):
             validate_org_path("../../etc/passwd", param_name="target_file")
 
