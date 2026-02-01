@@ -10,16 +10,16 @@ AI Client (Claude Desktop, Claude Code, etc.)
     v
 server.py  (Python 3.10+, FastMCP)
     |
-    |  subprocess: emacs --batch -Q --load init.el --eval "(fn ...)"
-    |  user data passed via environment variables
+    |  emacsclient --eval "(progn (setenv ...) (fn ...))"
+    |  user data passed via (setenv ...) calls
     |
     v
-emacs-config/init.el  (Emacs Lisp)
+Emacs daemon  (persistent, started on first request)
     |
     |  org-mode API: read/write/search
     |
     v
-tasks/*.org  (plain text org files)
+~/spacecadet-tasks/*.org  (plain text org files)
 ```
 
 ## Components
@@ -31,9 +31,10 @@ The Python layer handles:
 - **MCP protocol** via FastMCP (stdio transport)
 - **Tool definitions** with parameter validation and docstrings
 - **Input sanitization** -- path traversal prevention, query character filtering
-- **Environment variable injection** -- user data is never inlined into elisp expressions
+- **Environment variable injection** -- user data is passed via `(setenv ...)` calls, never inlined into elisp expressions
 - **File locking** -- `fcntl` advisory locks prevent concurrent write corruption (Unix only)
-- **Subprocess management** -- each tool call spawns a fresh `emacs --batch` process with a 30-second timeout
+- **Daemon lifecycle** -- starts an Emacs daemon on first request, shuts it down on exit via `atexit`
+- **Configuration** -- resolves org directory from env var, config file, or default
 
 ### emacs-config/init.el -- Elisp backend
 
@@ -46,9 +47,11 @@ The Emacs layer handles:
 - **Clocking** -- time tracking with CLOCK entries in LOGBOOK drawers
 - **JSON output** -- all responses are JSON-encoded for server.py to parse
 
-### tasks/*.org -- Data storage
+### Org files -- Data storage
 
-Plain text org-mode files. The default file is `tasks.org`. Tasks can span multiple files by using the `file` parameter in `add_task` or `SPACECADET_ORG_DIR` pointing to a directory with multiple `.org` files.
+Plain text org-mode files stored in the configured org directory (default: `~/spacecadet-tasks/`). The default file is `tasks.org`. Tasks can span multiple files by using the `file` parameter in `add_task` or pointing `SPACECADET_ORG_DIR` at a directory with multiple `.org` files.
+
+Since org files are plain text, they work with any file-syncing service (iCloud, Dropbox, Google Drive, OneDrive, Syncthing) for cross-machine access.
 
 ## Security model
 
@@ -66,15 +69,25 @@ The `file` and `target_file` parameters are validated by `validate_org_path()` i
 
 Org-mode match queries in `list_tasks` and `search_tasks` are filtered to allow only alphanumeric characters and a small set of operators (`+`, `-`, `_`, `/`, `=`).
 
-## Batch mode isolation
+## Daemon architecture
 
-Every tool call runs `emacs --batch -Q --load init.el`. The flags mean:
+On the first tool call, spacecadet starts a dedicated Emacs daemon:
 
-- `--batch` -- non-interactive, no window system
+```
+emacs --daemon=spacecadet-{pid} -Q --load init.el
+```
+
+The flags mean:
+
+- `--daemon=spacecadet-{pid}` -- run as a named daemon (unique per server process)
 - `-Q` -- ignore the user's `~/.emacs`, `~/.emacs.d/init.el`, and site-start files
 - `--load init.el` -- load only the spacecadet configuration
 
-This ensures spacecadet never interferes with or depends on the user's personal Emacs setup. Each invocation is a fresh process with no persistent state.
+Subsequent tool calls use `emacsclient --socket-name=spacecadet-{pid} --eval "..."` to evaluate elisp against the running daemon. This avoids the ~4 second startup cost of `emacs --batch` on each call, keeping response times under 500ms.
+
+The daemon is isolated from the user's personal Emacs setup and runs with its own socket. It is shut down automatically when the server exits via an `atexit` handler.
+
+Before each evaluation, all `SC_*` environment variables are cleared and re-set to prevent data leaking between calls. Org-mode buffers are also refreshed to ensure the daemon reads the latest file contents from disk.
 
 ## File locking
 

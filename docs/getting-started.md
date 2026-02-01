@@ -34,7 +34,7 @@ sudo dnf install emacs-nox
 sudo pacman -S emacs-nox
 ```
 
-The `-nox` variant is recommended for spacecadet since it runs in batch mode and doesn't need a GUI.
+The `-nox` variant is recommended since spacecadet doesn't need a GUI.
 
 ## Installation
 
@@ -48,9 +48,8 @@ The setup script:
 
 1. Checks that `emacs` and `python3` are in your PATH
 2. Installs the `mcp` Python package
-3. Creates a default `tasks/tasks.org` file
-4. Verifies the Emacs configuration loads correctly
-5. Prints configuration instructions
+3. Verifies the Emacs configuration loads correctly
+4. Prints configuration instructions
 
 ## Configuration
 
@@ -77,15 +76,25 @@ Replace `/path/to/spacecadet` with the actual path where you cloned the repo.
 claude mcp add spacecadet python3 /path/to/spacecadet/server.py
 ```
 
-### Custom org directory
+## Task storage
 
-By default, tasks are stored in `spacecadet/tasks/`. To use an existing org directory:
+On first run, spacecadet automatically creates `~/spacecadet-tasks/tasks.org` and saves this path to `.spacecadet.conf` (in the project root). Tasks persist across restarts.
+
+The directory is resolved in this order:
+
+1. **`SPACECADET_ORG_DIR` environment variable** -- highest priority
+2. **`.spacecadet.conf` file** -- persisted from previous run
+3. **`~/spacecadet-tasks/`** -- default on first run
+
+### Using a custom directory
+
+To use an existing org directory (e.g. your personal org-mode files):
 
 ```bash
 export SPACECADET_ORG_DIR=~/org
 ```
 
-Set this in your shell profile or pass it as an environment variable in your MCP client config:
+Or pass it in your MCP client config:
 
 ```json
 {
@@ -100,6 +109,25 @@ Set this in your shell profile or pass it as an environment variable in your MCP
   }
 }
 ```
+
+You can also edit `.spacecadet.conf` directly -- it contains a single line with the absolute path to the org directory.
+
+### Cloud sync
+
+Point `SPACECADET_ORG_DIR` at a cloud-synced folder to access your tasks from any machine:
+
+| Service | Example path |
+|---------|-------------|
+| **iCloud** | `~/Library/Mobile Documents/com~apple~CloudDocs/org` |
+| **Dropbox** | `~/Dropbox/org` |
+| **Google Drive** | `~/Google Drive/My Drive/org` |
+| **OneDrive** | `~/OneDrive/org` |
+| **Syncthing** | `~/Sync/org` |
+
+Since tasks are plain `.org` text files, any file-syncing service works. If you already use org-mode, point spacecadet at your existing org directory and it will read your files directly.
+
+!!! tip "Multiple machines"
+    Install spacecadet on each machine and set `SPACECADET_ORG_DIR` to the same synced folder. Each instance runs its own Emacs daemon independently -- there are no server-side dependencies or databases to coordinate.
 
 ## Task states
 

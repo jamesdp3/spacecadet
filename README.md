@@ -19,7 +19,7 @@ sudo dnf install emacs-nox      # Fedora
 sudo pacman -S emacs-nox        # Arch
 ```
 
-The `-nox` variant is recommended since spacecadet runs in batch mode and doesn't need a GUI.
+The `-nox` variant is recommended since spacecadet doesn't need a GUI.
 
 ## Setup
 
@@ -29,7 +29,7 @@ cd spacecadet
 ./setup.sh
 ```
 
-The setup script installs dependencies, creates a default tasks directory, and prints configuration instructions for your MCP client.
+The setup script installs dependencies and prints configuration instructions for your MCP client.
 
 ## Configuration
 
@@ -54,13 +54,47 @@ Add to your MCP settings (`~/.config/claude/claude_desktop_config.json`):
 claude mcp add spacecadet python3 /path/to/spacecadet/server.py
 ```
 
-### Custom org directory
+### Task storage
 
-By default, tasks are stored in `spacecadet/tasks/`. To use your own org directory:
+On first run, spacecadet creates a `tasks.org` file in `~/spacecadet-tasks/` and saves this path to `.spacecadet.conf`. Tasks persist across restarts.
+
+To change the task directory, set the `SPACECADET_ORG_DIR` environment variable:
 
 ```bash
 export SPACECADET_ORG_DIR=~/org
 ```
+
+Or pass it in your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "spacecadet": {
+      "command": "python3",
+      "args": ["/path/to/spacecadet/server.py"],
+      "env": {
+        "SPACECADET_ORG_DIR": "/home/you/org"
+      }
+    }
+  }
+}
+```
+
+You can also edit `.spacecadet.conf` directly -- it contains a single line with the path.
+
+### Cloud sync
+
+Point `SPACECADET_ORG_DIR` at a cloud-synced folder to access your tasks from any machine:
+
+| Service | Example path |
+|---------|-------------|
+| **iCloud** | `~/Library/Mobile Documents/com~apple~CloudDocs/org` |
+| **Dropbox** | `~/Dropbox/org` |
+| **Google Drive** | `~/Google Drive/My Drive/org` |
+| **OneDrive** | `~/OneDrive/org` |
+| **Syncthing** | `~/Sync/org` |
+
+Since tasks are plain `.org` text files, any file-syncing service works. If you already use org-mode, point spacecadet at your existing org directory and it will read your files directly.
 
 ## Tools
 
@@ -106,15 +140,15 @@ AI Client (Claude Desktop, Claude Code, etc.)
     |  MCP protocol (stdio)
     v
 server.py  (Python, FastMCP)
-    |  subprocess
+    |  emacsclient --eval
     v
-emacs --batch -Q --load init.el --eval "(elisp-fn ...)"
-    |  reads/writes
+Emacs daemon  (persistent, started on first request)
+    |  org-mode API
     v
-tasks/*.org
+~/spacecadet-tasks/*.org  (plain text)
 ```
 
-Each tool call invokes Emacs in batch mode with an isolated configuration (no interference with your personal Emacs setup). Emacs reads/writes org files directly, providing deterministic accuracy for all task operations.
+On the first tool call, spacecadet starts a dedicated Emacs daemon with an isolated configuration (no interference with your personal Emacs setup). Subsequent calls use `emacsclient` to evaluate elisp against the running daemon, keeping response times under 500ms. The daemon is automatically shut down when the server exits.
 
 ## Task IDs
 

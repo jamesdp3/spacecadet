@@ -34,12 +34,12 @@ AI Client (Claude Desktop, Claude Code, etc.)
     |  MCP protocol (stdio)
     v
 server.py  (Python, FastMCP)
-    |  subprocess
+    |  emacsclient --eval
     v
-emacs --batch -Q --load init.el --eval "(elisp-fn ...)"
-    |  reads/writes
+Emacs daemon  (persistent, started on first request)
+    |  org-mode API
     v
-tasks/*.org
+~/spacecadet-tasks/*.org  (plain text)
 ```
 
-Each tool call invokes Emacs in batch mode with an isolated configuration. No interference with your personal Emacs setup. See [Architecture](architecture.md) for the full picture.
+A dedicated Emacs daemon starts on the first request and stays running for fast subsequent calls. Tasks are stored as plain `.org` text files -- point them at a cloud-synced folder (iCloud, Dropbox, etc.) to access from any machine. No interference with your personal Emacs setup. See [Architecture](architecture.md) for the full picture.
