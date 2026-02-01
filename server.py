@@ -70,26 +70,37 @@ def _elisp_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
+_daemon_proc = None
+
+
 def _start_daemon():
     """Start an Emacs daemon for this server process."""
-    global _daemon_started
+    global _daemon_started, _daemon_proc
     if _daemon_started:
         return
 
     org_dir_escaped = _elisp_escape(ORG_DIR)
 
-    subprocess.Popen(
+    _daemon_proc = subprocess.Popen(
         [
             "emacs", f"--daemon={SOCKET_NAME}", "-Q",
             "--load", str(INIT_FILE),
             "--eval", f'(setenv "SPACECADET_ORG_DIR" "{org_dir_escaped}")',
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
 
     # Wait for the daemon socket to appear
     for _ in range(100):
+        # Check if daemon process died with an error
+        rc = _daemon_proc.poll()
+        if rc is not None and rc != 0:
+            stderr = _daemon_proc.stderr.read().decode(errors="replace").strip()
+            raise RuntimeError(
+                f"Emacs daemon exited with code {rc}"
+                + (f": {stderr[:500]}" if stderr else "")
+            )
         try:
             result = subprocess.run(
                 ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", "(+ 1 1)"],
@@ -102,11 +113,20 @@ def _start_daemon():
             pass
         time.sleep(0.1)
 
-    raise RuntimeError("Emacs daemon failed to start within 10 seconds")
+    # Timeout — collect any stderr for diagnostics
+    stderr = ""
+    if _daemon_proc.poll() is None:
+        _daemon_proc.kill()
+        stderr = _daemon_proc.stderr.read().decode(errors="replace").strip()
+    raise RuntimeError(
+        "Emacs daemon failed to start within 10 seconds"
+        + (f": {stderr[:500]}" if stderr else "")
+    )
 
 
 def _stop_daemon():
     """Kill the Emacs daemon on exit."""
+    global _daemon_proc
     try:
         subprocess.run(
             ["emacsclient", f"--socket-name={SOCKET_NAME}", "--eval", "(kill-emacs)"],
@@ -114,6 +134,15 @@ def _stop_daemon():
         )
     except Exception:
         pass
+    # Fallback: force-kill if emacsclient didn't work
+    if _daemon_proc is not None:
+        try:
+            if _daemon_proc.poll() is None:
+                _daemon_proc.kill()
+                _daemon_proc.wait(timeout=3)
+        except Exception:
+            pass
+        _daemon_proc = None
 
 
 atexit.register(_stop_daemon)
@@ -140,7 +169,7 @@ def run_emacs(elisp_expr: str, extra_env: dict | None = None,
     sc_vars = ["SC_ID", "SC_HEADING", "SC_PRIORITY", "SC_TAGS", "SC_DEADLINE",
                "SC_SCHEDULED", "SC_STATE", "SC_FILE", "SC_NEW_STATE",
                "SC_NEW_PRIORITY", "SC_NEW_DEADLINE", "SC_NOTE", "SC_PROPERTY",
-               "SC_VALUE", "SC_TARGET_HEADING", "SC_TARGET_FILE"]
+               "SC_VALUE", "SC_TARGET_HEADING", "SC_TARGET_FILE", "SC_QUERY"]
     setenv_forms = [f'(setenv "{v}" nil)' for v in sc_vars]
     setenv_forms.append(f'(setenv "SPACECADET_ORG_DIR" "{_elisp_escape(ORG_DIR)}")')
     if extra_env:
@@ -432,10 +461,10 @@ def search_tasks(query: str) -> str:
     Args:
         query: Org-mode match string
     """
-    # Sanitize: only allow alphanumeric, +, -, _, /, =, ", backslash
-    safe_query = "".join(c for c in query if c.isalnum() or c in '+-_/="\\ ')
-    expr = f'(spacecadet-match-query "{safe_query}")'
-    return _result_to_str(run_emacs(expr))
+    # Sanitize: only allow alphanumeric and org-mode match operators
+    safe_query = "".join(c for c in query if c.isalnum() or c in "+-_/= ")
+    env = {"SC_QUERY": safe_query}
+    return _result_to_str(run_emacs("(spacecadet-match-query (spacecadet--env \"SC_QUERY\"))", env))
 
 
 @mcp.tool()

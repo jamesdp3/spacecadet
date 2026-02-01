@@ -256,38 +256,37 @@ Calls CALLBACK with point on the matching heading. Returns t if found."
                        (format "  :%s:" (mapconcat #'string-trim tags-list ":"))
                      ""))
          (headline (format "* %s%s %s%s" state priority-str heading tags-str)))
-    (unless heading
-      (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_HEADING not set"))))
-      nil)
-    ;; Ensure file exists with header
-    (unless (file-exists-p target-file)
-      (with-temp-file target-file
-        (insert "#+TITLE: Spacecadet Tasks\n#+STARTUP: overview\n\n")))
-    ;; Append the task
-    (with-current-buffer (find-file-noselect target-file)
-      (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-      (insert headline "\n")
-      ;; Planning lines go together immediately after headline
-      (when deadline
-        (insert (format "   DEADLINE: <%s>" deadline))
-        (when scheduled
-          (insert (format " SCHEDULED: <%s>" scheduled)))
-        (insert "\n"))
-      (when (and scheduled (not deadline))
-        (insert (format "   SCHEDULED: <%s>\n" scheduled)))
-      ;; Go back to the heading we just inserted and assign an org-id
-      (forward-line -1)
-      (org-back-to-heading t)
-      (let ((task-id (org-id-get-create)))
-        (save-buffer)
-        (kill-buffer (current-buffer))
-        (princ (json-encode (list (cons 'status "ok")
-                                  (cons 'id task-id)
-                                  (cons 'heading heading)
-                                  (cons 'todo state)
-                                  (cons 'file target-file))))))))
+    (if (not heading)
+        (princ (json-encode (list (cons 'status "error")
+                                  (cons 'message "SC_HEADING not set"))))
+      ;; Ensure file exists with header
+      (unless (file-exists-p target-file)
+        (with-temp-file target-file
+          (insert "#+TITLE: Spacecadet Tasks\n#+STARTUP: overview\n\n")))
+      ;; Append the task
+      (with-current-buffer (find-file-noselect target-file)
+        (goto-char (point-max))
+        (unless (bolp) (insert "\n"))
+        (insert headline "\n")
+        ;; Planning lines go together immediately after headline
+        (when deadline
+          (insert (format "   DEADLINE: <%s>" deadline))
+          (when scheduled
+            (insert (format " SCHEDULED: <%s>" scheduled)))
+          (insert "\n"))
+        (when (and scheduled (not deadline))
+          (insert (format "   SCHEDULED: <%s>\n" scheduled)))
+        ;; Go back to the heading we just inserted and assign an org-id
+        (forward-line -1)
+        (org-back-to-heading t)
+        (let ((task-id (org-id-get-create)))
+          (save-buffer)
+          (kill-buffer (current-buffer))
+          (princ (json-encode (list (cons 'status "ok")
+                                    (cons 'id task-id)
+                                    (cons 'heading heading)
+                                    (cons 'todo state)
+                                    (cons 'file target-file)))))))))
 
 (defun spacecadet-update-task-from-env ()
   "Update a task. Parameters from environment variables:
@@ -434,49 +433,47 @@ directly rather than relying on org-clock state."
   "Add a note to a task. SC_ID or SC_HEADING, plus SC_NOTE from environment."
   (let ((note (spacecadet--env "SC_NOTE"))
         (timestamp (format-time-string "%Y-%m-%d %a %H:%M")))
-    (unless note
-      (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_NOTE required"))))
-      nil)
-    (let ((found (spacecadet--find-task-smart
-                  (lambda ()
-                    (let ((beg (org-entry-beginning-position))
-                          (end (org-entry-end-position)))
-                      (goto-char beg)
-                      (if (re-search-forward "^[ \t]*:LOGBOOK:" end t)
-                          (progn
-                            (forward-line 1)
-                            (insert (format "   - Note taken on [%s] \\\\\n     %s\n"
-                                            timestamp note)))
-                        (goto-char beg)
-                        (org-end-of-meta-data t)
-                        (insert (format "   :LOGBOOK:\n   - Note taken on [%s] \\\\\n     %s\n   :END:\n"
-                                        timestamp note))))
-                    (save-buffer)))))
-      (if found
-          (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'note-added t))))
+    (if (not note)
         (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message "Task not found"))))))))
+                                  (cons 'message "SC_NOTE required"))))
+      (let ((found (spacecadet--find-task-smart
+                    (lambda ()
+                      (let ((beg (org-entry-beginning-position))
+                            (end (org-entry-end-position)))
+                        (goto-char beg)
+                        (if (re-search-forward "^[ \t]*:LOGBOOK:" end t)
+                            (progn
+                              (forward-line 1)
+                              (insert (format "   - Note taken on [%s] \\\\\n     %s\n"
+                                              timestamp note)))
+                          (goto-char beg)
+                          (org-end-of-meta-data t)
+                          (insert (format "   :LOGBOOK:\n   - Note taken on [%s] \\\\\n     %s\n   :END:\n"
+                                          timestamp note))))
+                      (save-buffer)))))
+        (if found
+            (princ (json-encode (list (cons 'status "ok")
+                                      (cons 'note-added t))))
+          (princ (json-encode (list (cons 'status "error")
+                                    (cons 'message "Task not found")))))))))
 
 (defun spacecadet-set-property-from-env ()
   "Set a property on a task. SC_ID or SC_HEADING, plus SC_PROPERTY, SC_VALUE from environment."
   (let ((property (spacecadet--env "SC_PROPERTY"))
         (value (spacecadet--env "SC_VALUE")))
-    (unless (and property value)
-      (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_PROPERTY and SC_VALUE required"))))
-      nil)
-    (let ((found (spacecadet--find-task-smart
-                  (lambda ()
-                    (org-set-property property value)
-                    (save-buffer)))))
-      (if found
-          (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'property property)
-                                    (cons 'value value))))
+    (if (not (and property value))
         (princ (json-encode (list (cons 'status "error")
-                                  (cons 'message "Task not found"))))))))
+                                  (cons 'message "SC_PROPERTY and SC_VALUE required"))))
+      (let ((found (spacecadet--find-task-smart
+                    (lambda ()
+                      (org-set-property property value)
+                      (save-buffer)))))
+        (if found
+            (princ (json-encode (list (cons 'status "ok")
+                                      (cons 'property property)
+                                      (cons 'value value))))
+          (princ (json-encode (list (cons 'status "error")
+                                    (cons 'message "Task not found")))))))))
 
 ;;; ============================================================
 ;;; REFILE OPERATION
@@ -491,10 +488,9 @@ SC_ID or SC_HEADING, SC_TARGET_HEADING, SC_TARGET_FILE from environment."
          (target-buf nil)
          (source-buf nil)
          (subtree-text nil))
-    (unless target-heading
-      (princ (json-encode (list (cons 'status "error")
-                                (cons 'message "SC_TARGET_HEADING required"))))
-      nil)
+    (if (not target-heading)
+        (princ (json-encode (list (cons 'status "error")
+                                  (cons 'message "SC_TARGET_HEADING required"))))
     ;; Find the target heading
     (let ((files (if target-file
                      (list (expand-file-name target-file spacecadet-org-dir))
@@ -552,7 +548,7 @@ SC_ID or SC_HEADING, SC_TARGET_HEADING, SC_TARGET_FILE from environment."
             (with-current-buffer source-buf
               (save-buffer)))
           (princ (json-encode (list (cons 'status "ok")
-                                    (cons 'refiled-to target-heading)))))))))
+                                    (cons 'refiled-to target-heading))))))))))
 
 (provide 'spacecadet-init)
 ;;; init.el ends here

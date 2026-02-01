@@ -150,3 +150,58 @@ class TestSetProperty:
         task_id = add_result["id"]
         result = json.loads(set_property(id=task_id, property="Effort", value="2:00"))
         assert result["status"] == "ok"
+
+
+class TestErrorPaths:
+    """Tests for error handling and edge cases."""
+
+    def test_update_nonexistent_by_heading(self, org_dir):
+        from server import update_task
+        result = json.loads(update_task(heading="Does not exist", new_state="DONE"))
+        assert result["status"] == "error"
+        assert "not found" in result["message"].lower()
+
+    def test_update_nonexistent_by_id(self, org_dir):
+        from server import update_task
+        result = json.loads(update_task(id="00000000-0000-0000-0000-000000000000", new_state="DONE"))
+        assert result["status"] == "error"
+
+    def test_delete_nonexistent(self, org_dir):
+        from server import delete_task
+        result = json.loads(delete_task(heading="Ghost task"))
+        assert result["status"] == "error"
+
+    def test_get_task_no_args(self, org_dir):
+        from server import get_task
+        result = json.loads(get_task())
+        assert result["status"] == "error"
+
+    def test_add_note_missing_note(self, org_dir):
+        from server import add_task, add_note
+        add_result = json.loads(add_task(heading="No note target"))
+        task_id = add_result["id"]
+        result = json.loads(add_note(id=task_id, note=""))
+        assert result["status"] == "error"
+
+    def test_set_property_missing_fields(self, org_dir):
+        from server import add_task, set_property
+        add_result = json.loads(add_task(heading="No prop target"))
+        task_id = add_result["id"]
+        result = json.loads(set_property(id=task_id, property="", value=""))
+        assert result["status"] == "error"
+
+    def test_update_task_no_id_or_heading(self, org_dir):
+        from server import update_task
+        result = json.loads(update_task(new_state="DONE"))
+        assert result["status"] == "error"
+
+    def test_add_task_state_persists(self, org_dir):
+        """Verify that toggling state actually changes the org file."""
+        from server import add_task, update_task, get_task
+        add_result = json.loads(add_task(heading="Toggle me"))
+        task_id = add_result["id"]
+        assert add_result["todo"] == "TODO"
+
+        update_task(id=task_id, new_state="DONE")
+        get_result = json.loads(get_task(id=task_id))
+        assert get_result["todo"] == "DONE"
